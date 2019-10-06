@@ -837,11 +837,13 @@
                 let keys;
                 let payload;
                 let feather;
+                let props;
                 let afterGetFeather;
                 let afterGetKey;
                 let afterGetKeys;
                 let mapKeys;
                 let children;
+                let dates;
                 let tokens = [];
                 let cols = [];
                 let client = db.getClient(obj.client);
@@ -855,7 +857,6 @@
 
                 function selectToOne(row) {
                     return new Promise(function (resolve, reject) {
-                        let props = feather.properties;
                         let requests = [];
                         let rels;
 
@@ -887,8 +888,7 @@
                                         property: pk,
                                         value: row[col]
                                     }]
-                                },
-                                sanitize: false
+                                }
                             }, true, true));
                         });
 
@@ -914,7 +914,6 @@
 
                 function selectToMany(row) {
                     return new Promise(function (resolve, reject) {
-                        let props = feather.properties;
                         let requests = [];
 
                         children.forEach(function (key) {
@@ -937,8 +936,7 @@
                                     sort: [{
                                         property: pk
                                     }]
-                                },
-                                sanitize: false
+                                }
                             }, true, true));
                         });
 
@@ -957,6 +955,7 @@
 
                 afterGetFeather = function (resp) {
                     feather = resp;
+                    props = resp.properties;
                     let attrs = [];
 
                     if (!feather.name) {
@@ -986,13 +985,21 @@
                         });
                     }
 
-                    keys = keys || Object.keys(feather.properties);
+                    keys = keys || Object.keys(props);
 
                     children = keys.filter(function (key) {
                         return (
-                            feather.properties[key] &&
-                            typeof feather.properties[key].type === "object" &&
-                            feather.properties[key].type.parentOf
+                            props[key] &&
+                            typeof props[key].type === "object" &&
+                            props[key].type.parentOf
+                        );
+                    });
+
+                    dates = keys.filter(function (key) {
+                        return (
+                            props[key] &&
+                            props[key].type === "string" &&
+                            props[key].format === "date"
                         );
                     });
 
@@ -1116,6 +1123,15 @@
                             });
 
                             Promise.all(requests).then(function () {
+                                // Fix date formatting
+                                dates.forEach(function (key) {
+                                    let col = key.toSnakeCase();
+
+                                    resp.rows.forEach(function (row) {
+                                        row[col] = row[col].toLocalDate();
+                                    });
+                                });
+
                                 result = tools.sanitize(resp.rows);
 
                                 if (
