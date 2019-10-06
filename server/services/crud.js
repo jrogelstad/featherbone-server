@@ -868,10 +868,10 @@
 
                         rels.forEach(function (key) {
                             let rel = props[key].type.relation;
-                            let col = key + "_" + rel;
+                            let col = "_" + key + "_" + rel + pk;
                             let attrs = f.copy(props[key].type.properties);
 
-                            col = col.toSpinalCase();
+                            col = col.toSnakeCase();
 
                             if (attrs.indexOf("id") === -1) {
                                 attrs.unshift("id");
@@ -880,8 +880,13 @@
                             requests.push(crud.doSelect({
                                 client: obj.client,
                                 name: rel,
-                                id: row[col],
                                 properties: attrs,
+                                filter: {
+                                    criteria: [{
+                                        property: pk,
+                                        value: row[col]
+                                    }]
+                                },
                                 sanitize: false
                             }, true, true));
                         });
@@ -892,12 +897,12 @@
                             resp.forEach(function (data) {
                                 let key = rels[i];
                                 let rel = props[key].type.relation;
-                                let col = "_" + key + "_" + rel;
+                                let col = "_" + key + "_" + rel + pk;
 
-                                col = col.toSpinalCase();
+                                col = col.toSnakeCase();
 
                                 delete row[col];
-                                row[key] = data || null;
+                                row[key] = data[0] || null;
                                 i += 1;
                             });
 
@@ -921,9 +926,9 @@
 
                         rels.forEach(function (key) {
                             let rel = props[key].type.relation;
-                            let attr = key + "_" + rel + pk;
+                            let attr = "_" + key + "_" + rel + pk;
 
-                            attr = attr.toSpinalCase;
+                            attr = attr.toSnakeCase();
 
                             requests.push(crud.doSelect({
                                 client: obj.client,
@@ -1019,8 +1024,7 @@
 
                     cols.push(table);
                     sql = (
-                        "SELECT " + tokens.toString(",") +
-                        " AS result FROM %I"
+                        "SELECT " + tokens.toString(",") + " FROM %I"
                     );
                     sql = sql.format(cols);
 
@@ -1100,7 +1104,7 @@
                                 if (keys.indexOf("objectType") !== -1) {
                                     row.objectType = obj.name;
                                 }
-                                //requests.push(selectToOne(row));
+                                requests.push(selectToOne(row));
                                 //requests.push(selectToMany(row));
                             });
 
@@ -1114,6 +1118,11 @@
                                     )
                                 ) {
                                     feathername = obj.name;
+                                }
+
+                                if (isChild) {
+                                    resolve(result);
+                                    return;
                                 }
 
                                 // Handle subscription
