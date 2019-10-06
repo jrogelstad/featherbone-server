@@ -914,19 +914,24 @@
                 function selectToMany(row) {
                     return new Promise(function (resolve, reject) {
                         let props = feather.properties;
+                        let keys = obj.properties || Object.keys(props);
                         let requests = [];
                         let rels;
 
-                        rels = Object.keys(props).filter(function (key) {
+                        rels = keys.filter(function (key) {
                             return (
+                                props[key] &&
                                 typeof props[key].type === "object" &&
-                                props[key].parentOf
+                                props[key].type.parentOf
                             );
                         });
 
                         rels.forEach(function (key) {
                             let rel = props[key].type.relation;
-                            let attr = "_" + key + "_" + rel + pk;
+                            let attr = (
+                                "_" + props[key].type.parentOf +
+                                "_" + feather.name + pk
+                            );
 
                             attr = attr.toSnakeCase();
 
@@ -972,7 +977,7 @@
 
                     // Strip dot notation. Just fetch whole relation
                     if (obj.properties) {
-                        obj.properties = obj.properties.map(function (p) {
+                        keys = obj.properties.map(function (p) {
                             let i = p.indexOf(".");
                             let ret = p;
 
@@ -990,15 +995,16 @@
                         });
                     }
 
-                    keys = obj.properties || Object.keys(
-                        feather.properties
-                    );
+                    keys = keys || Object.keys(feather.properties);
 
                     /* Validate */
                     if (!isChild && feather.isChild && !isSuperUser) {
                         reject("Can not query directly on a child class");
                         return;
                     }
+
+                    tokens.push("%I");
+                    cols.push(pk);
 
                     keys.forEach(function (key) {
                         let col = key.toSnakeCase();
@@ -1105,7 +1111,7 @@
                                     row.objectType = obj.name;
                                 }
                                 requests.push(selectToOne(row));
-                                //requests.push(selectToMany(row));
+                                requests.push(selectToMany(row));
                             });
 
                             Promise.all(requests).then(function () {
