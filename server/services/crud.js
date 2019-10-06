@@ -160,8 +160,7 @@
                         id: obj.id,
                         showDeleted: true,
                         properties: Object.keys(props).filter(noChildProps),
-                        client: client,
-                        callback: afterDoSelect
+                        client: client
                     }, true).then(afterDoSelect).catch(reject);
                 };
 
@@ -837,6 +836,7 @@
                 let table;
                 let keys;
                 let payload;
+                let feather;
                 let afterGetFeather;
                 let afterGetKey;
                 let afterGetKeys;
@@ -844,6 +844,7 @@
                 let tokens = [];
                 let cols = [];
                 let client = db.getClient(obj.client);
+                let pk = "_pk";
 
                 payload = {
                     name: obj.name,
@@ -851,7 +852,110 @@
                     showDeleted: obj.showDeleted
                 };
 
-                afterGetFeather = function (feather) {
+                function selectToOne(row) {
+                    return new Promise(function (resolve, reject) {
+                        let props = feather.properties;
+                        let requests = [];
+                        let rels;
+
+                        rels = Object.keys(props).filter(function (key) {
+                            return (
+                                typeof props[key].type === "object" &&
+                                !props[key].type.parentOf &&
+                                !props[key].type.childOf
+                            );
+                        });
+
+                        rels.forEach(function (key) {
+                            let rel = props[key].type.relation;
+                            let col = key + "_" + rel;
+                            let attrs = f.copy(props[key].type.properties);
+
+                            col = col.toSpinalCase();
+
+                            if (attrs.indexOf("id") === -1) {
+                                attrs.unshift("id");
+                            }
+
+                            requests.push(crud.doSelect({
+                                client: obj.client,
+                                name: rel,
+                                id: row[col],
+                                properties: attrs,
+                                sanitize: false
+                            }, true, true));
+                        });
+
+                        Promise.all(requests).then(function (resp) {
+                            let i = 0;
+
+                            resp.forEach(function (data) {
+                                let key = rels[i];
+                                let rel = props[key].type.relation;
+                                let col = "_" + key + "_" + rel;
+
+                                col = col.toSpinalCase();
+
+                                delete row[col];
+                                row[key] = data || null;
+                                i += 1;
+                            });
+
+                            resolve();
+                        }).catch(reject);
+                    });
+                }
+
+                function selectToMany(row) {
+                    return new Promise(function (resolve, reject) {
+                        let props = feather.properties;
+                        let requests = [];
+                        let rels;
+
+                        rels = Object.keys(props).filter(function (key) {
+                            return (
+                                typeof props[key].type === "object" &&
+                                props[key].parentOf
+                            );
+                        });
+
+                        rels.forEach(function (key) {
+                            let rel = props[key].type.relation;
+                            let attr = key + "_" + rel + pk;
+
+                            attr = attr.toSpinalCase;
+
+                            requests.push(crud.doSelect({
+                                client: obj.client,
+                                name: rel,
+                                filter: {
+                                    criteria: [{
+                                        property: attr,
+                                        value: row[pk]
+                                    }],
+                                    sort: [{
+                                        property: pk
+                                    }]
+                                },
+                                sanitize: false
+                            }, true, true));
+                        });
+
+                        Promise.all(requests).then(function (resp) {
+                            let i = 0;
+
+                            resp.forEach(function (data) {
+                                row[rels[i]] = data || [];
+                                i += 1;
+                            });
+
+                            resolve();
+                        }).catch(reject);
+                    });
+                }
+
+                afterGetFeather = function (resp) {
+                    feather = resp;
                     let attrs = [];
 
                     if (!feather.name) {
@@ -859,7 +963,7 @@
                         return;
                     }
 
-                    table = "_" + feather.name.toSnakeCase();
+                    table = feather.name.toSnakeCase();
 
                     // Strip dot notation. Just fetch whole relation
                     if (obj.properties) {
@@ -876,7 +980,7 @@
                             }
                             attrs.push(ret);
                             return ret;
-                        }).filter(function(p) {
+                        }).filter(function (p) {
                             return p !== undefined;
                         });
                     }
@@ -892,14 +996,31 @@
                     }
 
                     keys.forEach(function (key) {
-                        tokens.push("%I");
-                        cols.push(key.toSnakeCase());
+                        let col = key.toSnakeCase();
+                        let type = feather.properties[key].type;
+
+                        if (
+                            typeof type === "object" &&
+                            !type.parentOf && !type.childOf
+                        ) {
+                            tokens.push("%I");
+                            cols.push(
+                                "_" + col + "_" + type.relation.toSnakeCase() +
+                                pk
+                            );
+                        } else if (
+                            typeof type !== "object" &&
+                            key !== "objectType"
+                        ) {
+                            tokens.push("%I");
+                            cols.push(col);
+                        }
                     });
 
                     cols.push(table);
                     sql = (
-                        "SELECT to_json((" + tokens.toString(",") +
-                        ")) AS result FROM %I"
+                        "SELECT " + tokens.toString(",") +
+                        " AS result FROM %I"
                     );
                     sql = sql.format(cols);
 
@@ -972,43 +1093,45 @@
                         sql += tools.processSort(sort, tokens);
                         sql = sql.format(tokens);
 
-                        client.query(sql, keys, function (err, resp) {
-                            if (err) {
-                                reject(err);
-                                return;
-                            }
+                        client.query(sql, keys).then(function (resp) {
+                            let requests = [];
 
-                            result = tools.sanitize(resp.rows.map(mapKeys));
-
-                            function ids(item) {
-                                return item.id;
-                            }
-
-                            if (
-                                !obj.filter || (
-                                    !obj.filter.criteria &&
-                                    !obj.filter.limit
-                                )
-                            ) {
-                                feathername = obj.name;
-                            }
-
-                            // Handle subscription
-                            events.subscribe(
-                                client,
-                                obj.subscription,
-                                result.map(ids),
-                                feathername
-                            ).then(
-                                function () {
-                                    resolve(result);
+                            resp.rows.forEach(function (row) {
+                                if (keys.indexOf("objectType") !== -1) {
+                                    row.objectType = obj.name;
                                 }
-                            ).catch(
-                                reject
-                            );
-                        });
+                                //requests.push(selectToOne(row));
+                                //requests.push(selectToMany(row));
+                            });
+
+                            Promise.all(requests).then(function () {
+                                result = tools.sanitize(resp.rows);
+
+                                if (
+                                    !obj.filter || (
+                                        !obj.filter.criteria &&
+                                        !obj.filter.limit
+                                    )
+                                ) {
+                                    feathername = obj.name;
+                                }
+
+                                // Handle subscription
+                                events.subscribe(
+                                    client,
+                                    obj.subscription,
+                                    result.map((item) => item.id),
+                                    feathername
+                                ).then(resolve.bind(null, result)).catch(
+                                    reject
+                                );
+                            });
+                        }).catch(reject);
                     } else {
                         // Handle subscription
+                        // Q: What if there were just no results in the most
+                        // recent offset page, do we really want to completely
+                        // unsubscribe?
                         events.unsubscribe(
                             client,
                             subscription.id
