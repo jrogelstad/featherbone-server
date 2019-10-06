@@ -841,6 +841,7 @@
                 let afterGetKey;
                 let afterGetKeys;
                 let mapKeys;
+                let children;
                 let tokens = [];
                 let cols = [];
                 let client = db.getClient(obj.client);
@@ -914,19 +915,9 @@
                 function selectToMany(row) {
                     return new Promise(function (resolve, reject) {
                         let props = feather.properties;
-                        let keys = obj.properties || Object.keys(props);
                         let requests = [];
-                        let rels;
 
-                        rels = keys.filter(function (key) {
-                            return (
-                                props[key] &&
-                                typeof props[key].type === "object" &&
-                                props[key].type.parentOf
-                            );
-                        });
-
-                        rels.forEach(function (key) {
+                        children.forEach(function (key) {
                             let rel = props[key].type.relation;
                             let attr = (
                                 "_" + props[key].type.parentOf +
@@ -955,7 +946,7 @@
                             let i = 0;
 
                             resp.forEach(function (data) {
-                                row[rels[i]] = data || [];
+                                row[children[i]] = data || [];
                                 i += 1;
                             });
 
@@ -996,6 +987,14 @@
                     }
 
                     keys = keys || Object.keys(feather.properties);
+
+                    children = keys.filter(function (key) {
+                        return (
+                            feather.properties[key] &&
+                            typeof feather.properties[key].type === "object" &&
+                            feather.properties[key].type.parentOf
+                        );
+                    });
 
                     /* Validate */
                     if (!isChild && feather.isChild && !isSuperUser) {
@@ -1111,7 +1110,9 @@
                                     row.objectType = obj.name;
                                 }
                                 requests.push(selectToOne(row));
-                                requests.push(selectToMany(row));
+                                if (children.length) {
+                                    requests.push(selectToMany(row));
+                                }
                             });
 
                             Promise.all(requests).then(function () {
