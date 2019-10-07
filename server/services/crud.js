@@ -841,7 +841,6 @@
                 let afterGetFeather;
                 let afterGetKey;
                 let afterGetKeys;
-                let mapKeys;
                 let children;
                 let dates;
                 let tokens = [];
@@ -1066,21 +1065,33 @@
 
                     sql += " WHERE _pk = $1";
 
-                    client.query(sql, [key], function (err, resp) {
-                        let result;
+                    client.query(sql, [key]).then(function (resp) {
+                        let result = resp.rows[0];
+                        let requests = [];
 
-                        if (err) {
-                            reject(err);
-                            return;
+                        result.objectType = obj.name;
+                        requests.push(selectToOne(result));
+                        if (children.length) {
+                            requests.push(selectToMany(result));
                         }
 
-                        result = mapKeys(resp.rows[0]);
-                        if (obj.sanitize !== false) {
-                            result = tools.sanitize(result);
-                        }
+                        Promise.all(requests).then(function () {
+                            // Fix date formatting
+                            dates.forEach(function (key) {
+                                let col = key.toSnakeCase();
 
-                        resolve(result);
-                    });
+                                if (result[col] !== null) {
+                                    result[col] = result[col].toLocalDate();
+                                }
+                            });
+
+                            if (obj.sanitize !== false) {
+                                result = tools.sanitize(result);
+                            }
+
+                            resolve(result);
+                        });
+                    }).catch(reject);
                 };
 
                 afterGetKeys = function (keys) {
@@ -1128,7 +1139,9 @@
                                     let col = key.toSnakeCase();
 
                                     resp.rows.forEach(function (row) {
-                                        row[col] = row[col].toLocalDate();
+                                        if (row[col] !== null) {
+                                            row[col] = row[col].toLocalDate();
+                                        }
                                     });
                                 });
 
@@ -1175,27 +1188,6 @@
                             reject
                         );
                     }
-                };
-
-                mapKeys = function (row) {
-                    let rkeys;
-                    let result = row.result;
-                    let ret = {};
-                    let i = 0;
-
-                    if (typeof result === "object") {
-                        rkeys = Object.keys(result);
-                        rkeys.forEach(function (key) {
-                            ret[keys[i]] = result[key];
-                            i += 1;
-                        });
-
-                        // If only one attribute returned
-                    } else {
-                        ret[keys[0]] = result;
-                    }
-
-                    return ret;
                 };
 
                 // Kick off query by getting feather, the rest falls through
