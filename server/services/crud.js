@@ -1013,8 +1013,7 @@
                         return;
                     }
 
-                    tokens.push("%I");
-                    cols.push(pk);
+                    cols.push(table);
 
                     keys.forEach(function (key) {
                         let col = key.toSnakeCase();
@@ -1040,7 +1039,9 @@
 
                     cols.push(table);
                     sql = (
-                        "SELECT " + tokens.toString(",") + " FROM %I"
+                        "SELECT _pk, to_camel_case(%I" +
+                        ".tableoid::regclass::text) AS object_type," +
+                        tokens.toString(",") + " FROM %I"
                     );
                     sql = sql.format(cols);
 
@@ -1074,7 +1075,6 @@
                         let result = resp.rows[0];
                         let requests = [];
 
-                        result.objectType = obj.name;
                         requests.push(selectToOne(result));
                         if (children.length) {
                             requests.push(selectToMany(result));
@@ -1129,9 +1129,6 @@
                             let requests = [];
 
                             resp.rows.forEach(function (row) {
-                                if (keys.indexOf("objectType") !== -1) {
-                                    row.objectType = obj.name;
-                                }
                                 requests.push(selectToOne(row));
                                 if (children.length) {
                                     requests.push(selectToMany(row));
