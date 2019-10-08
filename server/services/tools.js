@@ -271,7 +271,7 @@
                 let table = name.toSnakeCase();
                 let clause = "NOT is_deleted";
                 let sql = "SELECT _pk FROM %I WHERE ";
-                let tokens = ["_" + table];
+                let tokens = [table];
                 let criteria = false;
                 let sort = [];
                 let params = [];

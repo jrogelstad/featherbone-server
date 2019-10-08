@@ -874,21 +874,25 @@
 
                             col = col.toSnakeCase();
 
-                            if (attrs.indexOf("id") === -1) {
-                                attrs.unshift("id");
-                            }
-
-                            requests.push(crud.doSelect({
-                                client: obj.client,
-                                name: rel,
-                                properties: attrs,
-                                filter: {
-                                    criteria: [{
-                                        property: pk,
-                                        value: row[col]
-                                    }]
+                            if (row[col] === null || row[col] === -1) {
+                                requests.push(Promise.resolve([null]));
+                            } else {
+                                if (attrs.indexOf("id") === -1) {
+                                    attrs.unshift("id");
                                 }
-                            }, true, true));
+
+                                requests.push(crud.doSelect({
+                                    client: obj.client,
+                                    name: rel,
+                                    properties: attrs,
+                                    filter: {
+                                        criteria: [{
+                                            property: pk,
+                                            value: row[col]
+                                        }]
+                                    }
+                                }, true, true));
+                            }
                         });
 
                         Promise.all(requests).then(function (resp) {
@@ -917,9 +921,10 @@
 
                         children.forEach(function (key) {
                             let rel = props[key].type.relation;
+                            let tbl = props[key].inheritedFrom || feather.name;
                             let attr = (
                                 "_" + props[key].type.parentOf +
-                                "_" + feather.name + pk
+                                "_" + tbl + pk
                             );
 
                             attr = attr.toSnakeCase();
