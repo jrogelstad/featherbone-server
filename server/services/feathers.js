@@ -311,7 +311,7 @@
                 obj.callback(null, sql);
             };
 
-            that.getFeather({
+            tools.getFeather({
                 client: client,
                 data: {
                     name: obj.name
@@ -519,7 +519,7 @@
                         ) {
                             cParent = cProps[cKey].type.relation;
 
-                            that.getFeather({
+                            tools.getFeather({
                                 client: client,
                                 data: {
                                     name: obj.parent
@@ -558,7 +558,7 @@
                     resolve(resp);
                 };
 
-                that.getFeather({
+                tools.getFeather({
                     client: client,
                     data: {
                         name: obj.child
@@ -732,93 +732,6 @@
                         name: "catalog"
                     }
                 }).then(afterGetCatalog).catch(reject);
-            });
-        };
-
-        /**
-            Return a feather definition, including inherited properties.
-
-            @method getFeather
-            @param {Object} payload Request payload
-            @param {Client} payload.client Database client
-            @param {Object} payload.data Data
-            @param {Object} payload.data.name Feather name
-            @param {Boolean} [payload.data.includeInherited] Include inherited
-                or not. Default = true.
-            @return {Promise} Reseloves to feather definition object.
-        */
-        that.getFeather = function (obj) {
-            return new Promise(function (resolve, reject) {
-                let callback;
-                let name = obj.data.name;
-                let client = db.getClient(obj.client);
-
-                callback = function (catalog) {
-                    let resultProps;
-                    let featherProps;
-                    let keys;
-                    let appendParent;
-                    let result = {name: name, inherits: "Object"};
-
-                    appendParent = function (child, parent) {
-                        let feather = catalog[parent];
-                        let parentProps = feather.properties;
-                        let childProps = child.properties;
-                        let ckeys = Object.keys(parentProps);
-
-                        if (parent !== "Object") {
-                            appendParent(child, feather.inherits || "Object");
-                        }
-
-                        ckeys.forEach(function (key) {
-                            if (childProps[key] === undefined) {
-                                childProps[key] = parentProps[key];
-                                childProps[key].inheritedFrom = parent;
-                            }
-                        });
-
-                        return child;
-                    };
-
-                    /* Validation */
-                    if (!catalog[name]) {
-                        resolve(false);
-                        return;
-                    }
-
-                    /* Add other attributes after name */
-                    keys = Object.keys(catalog[name]);
-                    keys.forEach(function (key) {
-                        result[key] = catalog[name][key];
-                    });
-
-                    /* Want inherited properites before class properties */
-                    if (
-                        obj.data.includeInherited !== false &&
-                        name !== "Object"
-                    ) {
-                        result.properties = {};
-                        result = appendParent(result, result.inherits);
-                    } else {
-                        delete result.inherits;
-                    }
-
-                    /* Now add local properties back in */
-                    featherProps = catalog[name].properties;
-                    resultProps = result.properties;
-                    keys = Object.keys(featherProps);
-                    keys.forEach(function (key) {
-                        resultProps[key] = featherProps[key];
-                    });
-
-                    resolve(result);
-                };
-
-                /* First, get catalog */
-                settings.getSettings({
-                    client: client,
-                    data: {name: "catalog"}
-                }).then(callback).catch(reject);
             });
         };
 
@@ -1059,7 +972,7 @@
 
                     feather = resp.rows[0].feather.toCamelCase(true);
 
-                    that.getFeather({
+                    tools.getFeather({
                         client: client,
                         data: {
                             name: feather,
@@ -2141,7 +2054,7 @@
                         };
 
                         if (!feather) {
-                            that.getFeather({
+                            tools.getFeather({
                                 client: client,
                                 callback: callback,
                                 data: {
@@ -2302,7 +2215,7 @@
                         return;
                     }
 
-                    that.getFeather({
+                    tools.getFeather({
                         client: client,
                         data: {
                             name: spec.name,

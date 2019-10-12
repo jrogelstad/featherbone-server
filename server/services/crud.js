@@ -255,7 +255,7 @@
 
                 // Kick off query by getting feather, the rest falls
                 // through callbacks
-                feathers.getFeather({
+                tools.getFeather({
                     client: client,
                     data: {
                         name: obj.name
@@ -388,6 +388,7 @@
                         tools.getKeys({
                             client: client,
                             name: unique.feather,
+                            feather: feather,
                             filter: {
                                 criteria: [{
                                     property: unique.prop,
@@ -801,7 +802,7 @@
 
                 // Kick off query by getting feather, the rest falls
                 // through callbacks
-                feathers.getFeather(payload).then(
+                tools.getFeather(payload).then(
                     afterGetFeather
                 ).catch(
                     reject
@@ -840,7 +841,7 @@
                 let props;
                 let afterGetFeather;
                 let afterGetKey;
-                let afterGetKeys;
+                let afterFilterToSql;
                 let children;
                 let dates;
                 let tokens = [];
@@ -1056,10 +1057,11 @@
                         /* Get a filtered result */
                     } else {
                         payload.filter = obj.filter;
-                        tools.getKeys(
+                        payload.feather = feather;
+                        tools.filterToSql(
                             payload,
                             isSuperUser
-                        ).then(afterGetKeys).catch(reject);
+                        ).then(afterFilterToSql).catch(reject);
                     }
                 };
 
@@ -1099,102 +1101,67 @@
                     }).catch(reject);
                 };
 
-                afterGetKeys = function (keys) {
+                afterFilterToSql = function (clause) {
                     let result;
                     let feathername;
-                    let sort = (
-                        obj.filter
-                        ? obj.filter.sort || []
-                        : []
-                    );
                     let subscription = obj.subscription || {};
-                    let i = 0;
 
-                    if (keys.length) {
-                        tokens = [];
+                    sql = sql + clause;
 
-                        while (keys[i]) {
-                            i += 1;
-                            tokens.push("$" + i);
-                        }
+                    client.query(sql, keys).then(function (resp) {
+                        let requests = [];
 
-                        sql += " WHERE _pk IN (";
-                        sql += tokens.toString(",") + ")";
-
-                        tokens = [];
-                        sql += tools.processSort(sort, tokens);
-                        sql = sql.format(tokens);
-
-                        client.query(sql, keys).then(function (resp) {
-                            let requests = [];
-
-                            resp.rows.forEach(function (row) {
-                                requests.push(selectToOne(row));
-                                if (children.length) {
-                                    requests.push(selectToMany(row));
-                                }
-                            });
-
-                            Promise.all(requests).then(function () {
-                                // Fix date formatting
-                                dates.forEach(function (key) {
-                                    let col = key.toSnakeCase();
-
-                                    resp.rows.forEach(function (row) {
-                                        if (row[col] !== null) {
-                                            row[col] = row[col].toLocalDate();
-                                        }
-                                    });
-                                });
-
-                                result = tools.sanitize(resp.rows);
-
-                                if (
-                                    !obj.filter || (
-                                        !obj.filter.criteria &&
-                                        !obj.filter.limit
-                                    )
-                                ) {
-                                    feathername = obj.name;
-                                }
-
-                                if (isChild) {
-                                    resolve(result);
-                                    return;
-                                }
-
-                                // Handle subscription
-                                events.subscribe(
-                                    client,
-                                    obj.subscription,
-                                    result.map((item) => item.id),
-                                    feathername
-                                ).then(resolve.bind(null, result)).catch(
-                                    reject
-                                );
-                            });
-                        }).catch(reject);
-                    } else {
-                        // Handle subscription
-                        // Q: What if there were just no results in the most
-                        // recent offset page, do we really want to completely
-                        // unsubscribe?
-                        events.unsubscribe(
-                            client,
-                            subscription.id
-                        ).then(
-                            function () {
-                                resolve([]);
+                        resp.rows.forEach(function (row) {
+                            requests.push(selectToOne(row));
+                            if (children.length) {
+                                requests.push(selectToMany(row));
                             }
-                        ).catch(
-                            reject
-                        );
-                    }
+                        });
+
+                        Promise.all(requests).then(function () {
+                            // Fix date formatting
+                            dates.forEach(function (key) {
+                                let col = key.toSnakeCase();
+
+                                resp.rows.forEach(function (row) {
+                                    if (row[col] !== null) {
+                                        row[col] = row[col].toLocalDate();
+                                    }
+                                });
+                            });
+
+                            result = tools.sanitize(resp.rows);
+
+                            if (
+                                !obj.filter || (
+                                    !obj.filter.criteria &&
+                                    !obj.filter.limit
+                                )
+                            ) {
+                                feathername = obj.name;
+                            }
+
+                            if (isChild) {
+                                resolve(result);
+                                return;
+                            }
+
+                            // Handle subscription
+                            events.subscribe(
+                                client,
+                                obj.subscription,
+                                result.map((item) => item.id),
+                                feathername
+                            ).then(resolve.bind(null, result)).catch(
+                                reject
+                            );
+                        });
+                    }).catch(reject);
                 };
 
                 // Kick off query by getting feather, the rest falls through
                 // callbacks
-                feathers.getFeather({
+                tools.getFeather({
                     client: client,
                     data: {
                         name: obj.name
@@ -1419,6 +1386,7 @@
                         tools.getKeys({
                             client: client,
                             name: unique.feather,
+                            feather: feather,
                             filter: {
                                 criteria: [{
                                     property: unique.prop,
@@ -1777,7 +1745,7 @@
 
                 // Kick off query by getting feather, the rest falls
                 // through callbacks
-                feathers.getFeather({
+                tools.getFeather({
                     client: client,
                     data: {
                         name: obj.name

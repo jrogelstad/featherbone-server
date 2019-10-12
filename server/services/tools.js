@@ -24,10 +24,12 @@
 
     const f = require("../../common/core");
     const {Database} = require("../database");
+    const {Settings} = require("./settings");
     const ops = Object.keys(f.operators);
     const format = require("pg-format");
 
     const db = new Database();
+    const settings = new Settings();
     const tools = {};
 
     function curry(...args1) {
@@ -61,6 +63,76 @@
         }
 
         return curry(format, ary)();
+    };
+
+    /**
+        Adds a token for a given column name to `tokens` and returns
+        "%I" as the place holder value for a SQL clause.
+        @private
+        @method resolvePath
+        @param {String} column
+        @param {Array} tokens
+        @param {Array} join Left outer join clauses
+        @param {Object} feather Feather definition with properties
+        @param {Object} client
+        @return {Promise}
+    */
+    function resolvePath(col, tokens, joins, feather, client) {
+        return new Promise(function (resolve, reject) {
+            let prefix = col;
+            let suffix;
+            let table;
+            let tablecol;
+            let rel;
+            let idx = col.indexOf(".");
+            let join;
+            
+            function done() {
+                tokens.push(feather.name.toSnakeCase);
+                tokens.push(prefix.toSnakeCase());
+                resolve("%I.%I");
+            }
+
+            if (idx > -1) {
+                prefix = col.slice(0, idx);
+                suffix = col.slice(idx + 1, col.length).toSnakeCase();
+                table = feather.name.toSpinalCase();
+                rel = feather.properties[col].type.relation.toSnakeCase();
+                tablecol = "_" + col + "_" + rel + "_pk";
+                tablecol = tablecol.toSnakeCase();
+                join = "LEFT OUTER JOIN %I ON %I._pk=%I.%I";
+                join = join.format([rel, rel, table, tablecol]);
+
+                if (joins.indexOf(join) === -1) {
+                    joins.push(join);
+                }
+
+                idx = suffix.indexOf(".");
+
+                if (idx === -1) {
+                    done();
+                    return;
+                }
+
+                // Recursively keep going until we've handled all relations
+                tools.getFeather(
+                    client: obj.client,
+                    data: {
+                        name: feather.
+                    }
+                ).then(function (resp) {
+                    resolvePath(
+                        suffix,
+                        tokens,
+                        joins,
+                        resp,
+                        client
+                    ).then(resolve).catch(reject);
+                });
+            }
+
+            done();
+        });
     };
 
     /**
@@ -218,6 +290,93 @@
         };
 
         /**
+            Return a feather definition, including inherited properties.
+
+            @method getFeather
+            @param {Object} payload Request payload
+            @param {Client} payload.client Database client
+            @param {Object} payload.data Data
+            @param {Object} payload.data.name Feather name
+            @param {Boolean} [payload.data.includeInherited] Include inherited
+                or not. Default = true.
+            @return {Promise} Reseloves to feather definition object.
+        */
+        tools.getFeather = function (obj) {
+            return new Promise(function (resolve, reject) {
+                let callback;
+                let name = obj.data.name;
+                let client = db.getClient(obj.client);
+
+                callback = function (catalog) {
+                    let resultProps;
+                    let featherProps;
+                    let keys;
+                    let appendParent;
+                    let result = {name: name, inherits: "Object"};
+
+                    appendParent = function (child, parent) {
+                        let feather = catalog[parent];
+                        let parentProps = feather.properties;
+                        let childProps = child.properties;
+                        let ckeys = Object.keys(parentProps);
+
+                        if (parent !== "Object") {
+                            appendParent(child, feather.inherits || "Object");
+                        }
+
+                        ckeys.forEach(function (key) {
+                            if (childProps[key] === undefined) {
+                                childProps[key] = parentProps[key];
+                                childProps[key].inheritedFrom = parent;
+                            }
+                        });
+
+                        return child;
+                    };
+
+                    /* Validation */
+                    if (!catalog[name]) {
+                        resolve(false);
+                        return;
+                    }
+
+                    /* Add other attributes after name */
+                    keys = Object.keys(catalog[name]);
+                    keys.forEach(function (key) {
+                        result[key] = catalog[name][key];
+                    });
+
+                    /* Want inherited properites before class properties */
+                    if (
+                        obj.data.includeInherited !== false &&
+                        name !== "Object"
+                    ) {
+                        result.properties = {};
+                        result = appendParent(result, result.inherits);
+                    } else {
+                        delete result.inherits;
+                    }
+
+                    /* Now add local properties back in */
+                    featherProps = catalog[name].properties;
+                    resultProps = result.properties;
+                    keys = Object.keys(featherProps);
+                    keys.forEach(function (key) {
+                        resultProps[key] = featherProps[key];
+                    });
+
+                    resolve(result);
+                };
+
+                /* First, get catalog */
+                settings.getSettings({
+                    client: client,
+                    data: {name: "catalog"}
+                }).then(callback).catch(reject);
+            });
+        };
+
+        /**
             Get the primary key for a given id.
             @method getKey
             @param {Object} Request payload
@@ -228,55 +387,60 @@
         */
         tools.getKey = function (obj, isSuperUser) {
             return new Promise(function (resolve, reject) {
-                let payload;
+                let sql = "SELECT _pk FROM object WHERE id = $1 ";
+                let params = [obj.id];
+                let table = obj.name.toSnakeCase();
+                let tokens = [];
 
-                payload = {
-                    name: obj.name || "Object",
-                    filter: {criteria: [{property: "id", value: obj.id}]},
-                    client: obj.client,
-                    showDeleted: obj.showDeleted
-                };
+                // Add authorization criteria
+                if (isSuperUser === false) {
+                    sql += tools.buildAuthSql(
+                        "canRead",
+                        table,
+                        tokens
+                    );
 
-                function callback(keys) {
-                    resolve(keys[0]);
+                    params.push(obj.client.currentUser());
+                    sql = sql.format(tokens);
                 }
 
-                tools.getKeys(payload, isSuperUser).then(
-                    callback
-                ).catch(
-                    reject
-                );
+                obj.client(sql, params).then(
+                    (resp) => resolve(
+                        resp.rows && resp.rows.length
+                        ? resp.rows[0]._pk
+                        : undefined
+                     )
+                ).catch(reject);
             });
         };
         /**
             Get an array of primary keys for a given feather and filter
             criteria.
-            @method getKeys
+            @method filterToSql
             @param {Object} payload Request payload
+            @param {String} payload.eeeeeeeeclient Client
             @param {Object} payload.name Feather name
             @param {Filter} [payload.filter] Filter
             @param {Boolean} [payload.showDeleted] Show deleted records
-            @param {Object} payload.client Database client
+            @param {Object} payload.feather Feather definition with properties
             @param {Boolean} [flag] Request as super user. Default false.
             @return {Promise}
         */
-        tools.getKeys = function (obj, isSuperUser) {
+        tools.filterToSql = function (obj, isSuperUser) {
             return new Promise(function (resolve, reject) {
-                let part;
-                let op;
-                let err;
-                let or;
                 let name = obj.name;
                 let filter = obj.filter;
                 let table = name.toSnakeCase();
-                let clause = "NOT is_deleted";
-                let sql = "SELECT _pk FROM %I WHERE ";
+                let clause = "NOT %I.is_deleted";
+                let sql = "WHERE ";
                 let tokens = [table];
                 let criteria = false;
                 let sort = [];
                 let params = [];
                 let parts = [];
                 let p = 1;
+                let joins = [];
+                let requests = [];
 
                 function callback(resp) {
                     let keys = resp.rows.map(function (rec) {
@@ -286,9 +450,44 @@
                     resolve(keys);
                 }
 
+                function processSort = function () {
+                    let order;
+                    let part;
+                    let clause = "";
+                    let i = 0;
+                    let parts = [];
+
+                    // Always sort on primary key as final tie breaker
+                    sort.push({property: tools.PKCOL});
+
+                    while (sort[i]) {
+                        order = (sort[i].order || "ASC");
+                        order = order.toUpperCase();
+                        if (order !== "ASC" && order !== "DESC") {
+                            throw "Unknown operator \"" + order + "\"";
+                        }
+                        part = resolvePath(
+                            sort[i].property,
+                            tokens,
+                            joins,
+                            obj.feather,
+                            obj.client
+                        );
+                        parts.push(part + " " + order);
+                        i += 1;
+                    }
+
+                    if (parts.length) {
+                        clause = " ORDER BY " + parts.join(",");
+                    }
+
+                    return clause;
+                };
+
                 try {
                     if (obj.showDeleted) {
                         clause = "true";
+                        tokens = [];
                     }
 
                     sql += clause;
@@ -300,7 +499,11 @@
 
                     // Add authorization criteria
                     if (isSuperUser === false) {
-                        sql += tools.buildAuthSql("canRead", table, tokens);
+                        sql += tools.buildAuthSql(
+                            "canRead",
+                            table,
+                            tokens
+                        );
 
                         params.push(obj.client.currentUser());
                         p += 1;
@@ -310,7 +513,11 @@
                     if (filter) {
                         // Process criteria
                         criteria.forEach(function (where) {
-                            op = where.operator || "=";
+                            let part;
+                            let op = where.operator || "=";
+                            let err;
+                            let or;
+                            let orequests = [];
 
                             if (ops.indexOf(op) === -1) {
                                 err = "Unknown operator \"" + op + "\"";
@@ -320,16 +527,32 @@
                             // Value "IN" array ("Andy" IN ["Ann","Andy"])
                             // Whether "Andy"="Ann" OR "Andy"="Andy"
                             if (op === "IN") {
-                                part = [];
-                                where.value.forEach(function (val) {
-                                    params.push(val);
-                                    part.push("$" + p);
-                                    p += 1;
-                                });
-                                part = tools.resolvePath(
+                                requests.push(resolvePath(
                                     where.property,
-                                    tokens
-                                ) + " IN (" + part.join(",") + ")";
+                                    tokens,
+                                    joins,
+                                    obj.feather,
+                                    obj.client
+                                ).then(function (resp) {
+                                    return new Promise(function (resolve) {
+                                        part = [];
+
+                                        where.value.forEach(function (val) {
+                                            params.push(val);
+                                            part.push("$" + p);
+                                            p += 1;
+                                        });
+
+                                        part = (
+                                            resp + " IN (" +
+                                            part.join(",") +
+                                            ")";
+                                        )
+
+                                        parts.push(part);
+                                        resolve();
+                                    });
+                                }).catch(reject));
 
                             // Property "OR" array compared to value
                             // (["name","email"]="Andy")
@@ -337,68 +560,142 @@
                             } else if (Array.isArray(where.property)) {
                                 or = [];
                                 where.property.forEach(function (prop) {
-                                    params.push(where.value);
-                                    or.push(tools.resolvePath(
+                                    let req = resolvePath(
                                         prop,
-                                        tokens
-                                    ) + " " + op + " $" + p);
-                                    p += 1;
+                                        tokens,
+                                        joins,
+                                        feather,
+                                        obj.client
+                                    ).then(function (resp) {
+                                        return new Promise(function (resolve) {
+                                            params.push(where.value);
+                                            or.push(
+                                                resp + " " + op + " $" + p
+                                            );
+                                            p += 1;
+                                            resolve();
+                                        });
+                                    }).catch(reject);
+                                    
+                                    orequests.push(req);
                                 });
-                                part = "(" + or.join(" OR ") + ")";
+
+                                requests.push(function () {
+                                    return new Promise(function (resolve) {
+                                        Promise.all(orequests).then(function () {
+                                            part = "(" + or.join(" OR ") + ")";
+                                            parts.push(part);
+                                        });
+                                    });
+                                });
 
                             // Regular comparison ("name"="Andy")
                             } else if (
                                 typeof where.value === "object" &&
                                 !where.value.id
                             ) {
-                                part = tools.resolvePath(
+                                resolvePath(
                                     where.property,
-                                    tokens
-                                ) + " IS NULL";
+                                    tokens,
+                                    joins,
+                                    obj.feather,
+                                    obj.client
+                                ).then(function (resp) {
+                                    return new Promise(function (resolve) {
+                                        part = resp + " IS NULL";
+                                        parts.push(part);
+                                        resolve();
+                                    });
+                                }).catch(reject));
                             } else {
                                 if (typeof where.value === "object") {
                                     where.property = where.property + ".id";
                                     where.value = where.value.id;
                                 }
-                                params.push(where.value);
-                                part = tools.resolvePath(
+
+                                resolvePath(
                                     where.property,
-                                    tokens
-                                ) + " " + op + " $" + p;
-                                p += 1;
-                            }
-                            parts.push(part);
+                                    tokens,
+                                    joins,
+                                    obj.feather,
+                                    obj.client
+                                ).then(function (resp) {
+                                    return new Promise(function (resolve) {
+                                        params.push(where.value);
+                                        part = resp + " " + op + " $" + p;
+                                        parts.push(part);
+                                        p += 1;
+                                        resolve();
+                                    });
+                                }).catch(reject));
+                            };
                         });
-
-                        if (parts.length) {
-                            sql += " AND " + parts.join(" AND ");
-                        }
                     }
 
+                    Promise.all(requests).then(function () {
+                        // Process sort
+                        processSort().then(function (resp) {
+                            // Add joins
+                            if (joins.length) {
+                                sql += joins.join(" ");
+                            }
 
-                    // Process sort
-                    sql += tools.processSort(sort, tokens);
+                            // Add where clause
+                            if (parts.length) {
+                                sql += " AND " + parts.join(" AND ");
+                            }
 
-                    if (filter) {
-                        // Process offset and limit
-                        if (filter.offset) {
-                            sql += " OFFSET $" + p;
-                            p += 1;
-                            params.push(filter.offset);
-                        }
+                            // sort, limit, offset
+                            sql += resp;
 
-                        if (filter.limit) {
-                            sql += " LIMIT $" + p;
-                            params.push(filter.limit);
-                        }
-                    }
+                            if (filter) {
+                                // Process offset and limit
+                                if (filter.offset) {
+                                    sql += " OFFSET $" + p;
+                                    p += 1;
+                                    params.push(filter.offset);
+                                }
 
-                    sql = sql.format(tokens);
+                                if (filter.limit) {
+                                    sql += " LIMIT $" + p;
+                                    params.push(filter.limit);
+                                }
+                            }
 
-                    obj.client.query(sql, params).then(callback).catch(reject);
+                            resolve(sql.format(tokens));
+                        });
+                    });
                 } catch (e) {
                     reject(e);
-                }
+                };
+            });
+        };
+
+        /**
+            Get an array of primary keys for a given feather and filter
+            criteria.
+            @method getKeys
+            @param {Object} payload Request payload
+            @param {Object} payload.name Feather name
+            @param {Filter} [payload.filter] Filter
+            @param {Boolean} [payload.showDeleted] Show deleted records
+            @param {Object} payload.client Database client
+            @param {Object} payload.feather Feather definition with properties
+            @param {Boolean} [flag] Request as super user. Default false.
+            @return {Promise}
+        */
+        tools.getKeys = function (obj, isSuperUser) {
+            return new Promise(function (resolve, reject) {
+                let sql = "SELECT _pk FROM object ";
+
+                tools.filterToSql(obj).then(function (clause) {
+                    sql = sql + clause;
+
+                    obj.client.query(
+                        sql,
+                        params
+                    ).then(resolve).catch(reject);
+                })
             });
         };
         /**
@@ -631,41 +928,6 @@
         };
 
         /**
-            Returns an `ORDER BY` SQL clause based sort criteria.
-            @method processSort
-            @param {Array} sort
-            @param {Array} tokens
-            @return {String} SQL clause
-        */
-        tools.processSort = function (sort, tokens) {
-            let order;
-            let part;
-            let clause = "";
-            let i = 0;
-            let parts = [];
-
-            // Always sort on primary key as final tie breaker
-            sort.push({property: tools.PKCOL});
-
-            while (sort[i]) {
-                order = (sort[i].order || "ASC");
-                order = order.toUpperCase();
-                if (order !== "ASC" && order !== "DESC") {
-                    throw "Unknown operator \"" + order + "\"";
-                }
-                part = tools.resolvePath(sort[i].property, tokens);
-                parts.push(part + " " + order);
-                i += 1;
-            }
-
-            if (parts.length) {
-                clause = " ORDER BY " + parts.join(",");
-            }
-
-            return clause;
-        };
-
-        /**
             Infer name of relation primary key column.
             @method relationColumn
             @param {String} key Column name
@@ -679,32 +941,6 @@
             ret += "_pk";
 
             return ret;
-        };
-
-        /**
-            Adds a token for a given column name to `tokens` and returns
-            "%I" as the place holder value for a SQL clause.
-            @method resolvePath
-            @param {String} column
-            @param {Array} tokens
-            @return {String}
-        */
-        tools.resolvePath = function (col, tokens) {
-            let prefix;
-            let suffix;
-            let ret;
-            let idx = col.lastIndexOf(".");
-
-            if (idx > -1) {
-                prefix = col.slice(0, idx);
-                suffix = col.slice(idx + 1, col.length).toSnakeCase();
-                ret = "(" + tools.resolvePath(prefix, tokens) + ").%I";
-                tokens.push(suffix);
-                return ret;
-            }
-
-            tokens.push(col.toSnakeCase());
-            return "%I";
         };
 
         /**

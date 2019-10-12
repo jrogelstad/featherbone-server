@@ -24,12 +24,12 @@
     "use strict";
 
     const {CRUD} = require("./crud");
-    const {Feathers} = require("./feathers");
+    const {Tools} = require("./tools");
     const f = require("../../common/core");
     const XLSX = require("xlsx");
     const fs = require("fs");
     const crud = new CRUD();
-    const feathers = new Feathers();
+    const tools = new Tools();
 
     function getFeather(client, name, localFeathers) {
         return new Promise(function (resolve, reject) {
@@ -68,7 +68,7 @@
                 ).then(resolve).catch(reject);
             }
 
-            feathers.getFeather({
+            tools.getFeather({
                 client,
                 data: {
                     name: name

@@ -1889,7 +1889,7 @@
     that.registerFunction("GET", "baseCurrency", currency.baseCurrency);
     that.registerFunction("GET", "convertCurrency", currency.convertCurrency);
     that.registerFunction("GET", "getServices", services.getServices);
-    that.registerFunction("GET", "getFeather", feathers.getFeather);
+    that.registerFunction("GET", "getFeather", tools.getFeather);
     that.registerFunction("GET", "getProfile", profile.getProfile);
     that.registerFunction("GET", "getRoutes", routes.getRoutes);
     that.registerFunction("GET", "getSettings", settings.getSettings);
