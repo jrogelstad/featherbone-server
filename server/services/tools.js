@@ -86,7 +86,7 @@
             let rel;
             let idx = col.indexOf(".");
             let join;
-            
+
             function done() {
                 tokens.push(feather.name.toSnakeCase);
                 tokens.push(prefix.toSnakeCase());
@@ -115,12 +115,12 @@
                 }
 
                 // Recursively keep going until we've handled all relations
-                tools.getFeather(
+                tools.getFeather({
                     client: obj.client,
                     data: {
-                        name: feather.
+                        name: feather.properties[col].type.relation
                     }
-                ).then(function (resp) {
+                }).then(function (resp) {
                     resolvePath(
                         suffix,
                         tokens,
@@ -133,7 +133,7 @@
 
             done();
         });
-    };
+    }
 
     /**
         @class Tools
@@ -406,8 +406,8 @@
 
                 obj.client(sql, params).then(
                     (resp) => resolve(
-                        resp.rows && resp.rows.length
-                        ? resp.rows[0]._pk
+                        (resp.rows && resp.rows.length)
+                        ? resp.rows[0][tools.PKCOL]
                         : undefined
                      )
                 ).catch(reject);
@@ -450,39 +450,50 @@
                     resolve(keys);
                 }
 
-                function processSort = function () {
-                    let order;
-                    let part;
-                    let clause = "";
-                    let i = 0;
-                    let parts = [];
+                function processSort() {
+                    return new Promise(function (resolve, reject) {
+                        let clause2 = "";
+                        let i = 0;
+                        let parts2 = [];
+                        let requests2 = [];
 
-                    // Always sort on primary key as final tie breaker
-                    sort.push({property: tools.PKCOL});
+                        // Always sort on primary key as final tie breaker
+                        sort.push({property: tools.PKCOL});
 
-                    while (sort[i]) {
-                        order = (sort[i].order || "ASC");
-                        order = order.toUpperCase();
-                        if (order !== "ASC" && order !== "DESC") {
-                            throw "Unknown operator \"" + order + "\"";
+                        function handlePart(order, resp) {
+                            return new Promise(function (resolve) {
+                                parts2.push(resp + " " + order);
+                                resolve();
+                            });
                         }
-                        part = resolvePath(
-                            sort[i].property,
-                            tokens,
-                            joins,
-                            obj.feather,
-                            obj.client
-                        );
-                        parts.push(part + " " + order);
-                        i += 1;
-                    }
 
-                    if (parts.length) {
-                        clause = " ORDER BY " + parts.join(",");
-                    }
+                        while (sort[i]) {
+                            let order;
 
-                    return clause;
-                };
+                            order = (sort[i].order || "ASC");
+                            order = order.toUpperCase();
+                            if (order !== "ASC" && order !== "DESC") {
+                                throw "Unknown operator \"" + order + "\"";
+                            }
+                            resolvePath(
+                                sort[i].property,
+                                tokens,
+                                joins,
+                                obj.feather,
+                                obj.client
+                            ).then(handlePart.bind(null, order));
+                            i += 1;
+                        }
+
+                        Promise.all(requests2).then(function () {
+                            if (parts2.length) {
+                                clause2 = " ORDER BY " + parts2.join(",");
+                            }
+
+                            resolve(clause2);
+                        });
+                    });
+                }
 
                 try {
                     if (obj.showDeleted) {
@@ -517,7 +528,7 @@
                             let op = where.operator || "=";
                             let err;
                             let or;
-                            let orequests = [];
+                            let oreq = [];
 
                             if (ops.indexOf(op) === -1) {
                                 err = "Unknown operator \"" + op + "\"";
@@ -546,8 +557,8 @@
                                         part = (
                                             resp + " IN (" +
                                             part.join(",") +
-                                            ")";
-                                        )
+                                            ")"
+                                        );
 
                                         parts.push(part);
                                         resolve();
@@ -576,13 +587,13 @@
                                             resolve();
                                         });
                                     }).catch(reject);
-                                    
-                                    orequests.push(req);
+
+                                    oreq.push(req);
                                 });
 
                                 requests.push(function () {
                                     return new Promise(function (resolve) {
-                                        Promise.all(orequests).then(function () {
+                                        Promise.all(oreq).then(function () {
                                             part = "(" + or.join(" OR ") + ")";
                                             parts.push(part);
                                         });
@@ -606,7 +617,7 @@
                                         parts.push(part);
                                         resolve();
                                     });
-                                }).catch(reject));
+                                }).catch(reject);
                             } else {
                                 if (typeof where.value === "object") {
                                     where.property = where.property + ".id";
@@ -627,8 +638,8 @@
                                         p += 1;
                                         resolve();
                                     });
-                                }).catch(reject));
-                            };
+                                }).catch(reject);
+                            }
                         });
                     }
 
@@ -667,7 +678,7 @@
                     });
                 } catch (e) {
                     reject(e);
-                };
+                }
             });
         };
 
@@ -688,14 +699,14 @@
             return new Promise(function (resolve, reject) {
                 let sql = "SELECT _pk FROM object ";
 
-                tools.filterToSql(obj).then(function (clause) {
+                tools.filterToSql(obj, isSuperUser).then(function (clause) {
                     sql = sql + clause;
 
                     obj.client.query(
                         sql,
-                        params
+                        params // THIS NEEDS TO BE PASSED IN!!!
                     ).then(resolve).catch(reject);
-                })
+                });
             });
         };
         /**
